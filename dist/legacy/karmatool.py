@@ -87,10 +87,7 @@ def print_conf():
 def check_bool_arg(arg):
 	try:
 		res = int(arg)
-		if (res == 0) or (res == 1):
-			return res
-		else:
-			return -1
+		return res if res in {0, 1} else -1
 	except ValueError:
 		return -1
 

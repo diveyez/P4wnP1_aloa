@@ -75,7 +75,7 @@ def read_packet(f):
 	snd = data[2]
 	rcv = data[3]
 	# reduce msg to real size
-	msg = data[4][0:snd]
+	msg = data[4][:snd]
 	return [src, dst, snd, rcv, msg]
 	
 def deliverStage2(hidDevPath, stage2Data, oneshot):

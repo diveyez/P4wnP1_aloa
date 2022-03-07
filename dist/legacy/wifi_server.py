@@ -99,10 +99,7 @@ class Packet:
 		resp.pay1 = chr(Packet.CTLM_TYPE_CON_RESET) +  chr(resetReason)
 		resp.FlagControlMessage = True
 		resp.ctlm_type = Packet.CTLM_TYPE_CON_RESET
-		if seq == -1:
-			resp.seq = (req.ack + 1) & 0xFF
-		else:
-			resp.seq = seq
+		resp.seq = (req.ack + 1) & 0xFF if seq == -1 else seq
 		resp.srvID = srvID
 		resp.ack = req.seq
 		resp.clientID =	req.clientID
@@ -168,7 +165,7 @@ class Packet:
 		return out
 
 	def generateRawVenIe(self, with_TL=True):
-		if self.pay2 == None:
+		if self.pay2 is None:
 			return None
 
 		payload = self.pay2[:236] # truncate, ToDo: warn if payload too large
@@ -185,7 +182,7 @@ class Packet:
 
 		if with_TL:
 			# add SSID type and length
-			out = "\xDD\xEE" + out # type 221, length 238
+			out = f"Ýî{out}"
 
 		return out
 
@@ -211,7 +208,7 @@ class Packet:
 
 		logging.debug("\tSSID payload len:\t{0}".format(len(self.pay1)))
 		logging.debug("\tSSID payload:\t{0}".format(Helper.s2hex(self.pay1)))
-		if self.pay2 == None:
+		if self.pay2 is None:
 			logging.debug("\tVendor IE:\tNone")
 		else:
 			logging.debug("\tVendor IE payload len:\t{0}".format(len(self.pay2)))
@@ -300,34 +297,25 @@ class ConnectionQueue:
 		return newcon
 
 	def getConnectionListByState(self, con_state):
-		res = []
-		for con in self.__queued_connections:
-			if con.state == con_state:
-				res.append(con)
-		return res
+		return [con for con in self.__queued_connections if con.state == con_state]
 
 	def getConnectionByClientIV(self, clientIV):
-		res = None
-		for con in self.__queued_connections:
-			if con.clientIV == clientIV:
-				res = con
-				break
-		return res
+		return next(
+		    (con for con in self.__queued_connections if con.clientIV == clientIV),
+		    None,
+		)
 
 	def getConnectionByClientID(self, clientID):
-		res = None
-		for con in self.__queued_connections:
-			if con.clientID == clientID:
-				res = con
-				break
-		return res
+		return next(
+		    (con for con in self.__queued_connections if con.clientID == clientID),
+		    None,
+		)
 	
 	def deleteClosedConnections(self):
-		closeList = []
-		for con in self.__queued_connections:
-			if con.state == ClientSocket.STATE_CLOSE:
-				closeList.append(con)
-				
+		closeList = [
+		    con for con in self.__queued_connections
+		    if con.state == ClientSocket.STATE_CLOSE
+		]
 		count = 0
 		for con in closeList:
 			print("Removed closed socket for clientID: {0}, clientIV: {1}".format(con.clientID, con.clientIV))
@@ -443,10 +431,7 @@ class ClientSocket(object):
 		self.__out_queue.put(data, block=block)
 
 	def __popInboundData(self):
-		if self.hasInData():
-			return self.__in_queue.get()
-		else:
-			return ""
+		return self.__in_queue.get() if self.hasInData() else ""
 
 	def disconnect(self, reason_code=Packet.CON_RESET_REASON_UNSPECIFIED):
 		reasonCodeChr = chr(reason_code)
@@ -479,7 +464,7 @@ class ClientSocket(object):
 		#### CTLM handling ######
 		if req.ctlm_type == Packet.CTLM_TYPE_CON_INIT_REQ1:
 			# first con_init_req1 as socket is still in close state
-			if self.state == ClientSocket.STATE_CLOSE:				
+			if self.state == ClientSocket.STATE_CLOSE:		
 				self.clientSA = req.sa # not usable as identifier for client !!!COULD CHANGE!!!
 
 				# generate response
@@ -493,12 +478,12 @@ class ClientSocket(object):
 				resp.seq = 1
 				# if we received a vendor IE, we inform the client by appending 0x02 at resp.pay1[5]
 				# if we aren't able to receive the vendor IE, we inform the client by appending 0x01 at resp.pay1[5]
-				if req.pay2 != None:
-					resp.pay1 += chr(2)
-					self.rxVenIePossible = True
-				else:
+				if req.pay2 is None:
 					resp.pay1 += chr(1)
 					self.rxVenIePossible = False
+				else:
+					resp.pay1 += chr(2)
+					self.rxVenIePossible = True
 				# we hand out a new clientID to the pending (not yet established) connection
 				resp.clientID = self.clientID
 				resp.srvID = self.srvID
@@ -512,19 +497,16 @@ class ClientSocket(object):
 				# transfer state of the connection
 				self.state = ClientSocket.STATE_PENDING_OPEN
 
-				return self.tx_packet
-
-			# repeated con_init_req1 as socket is already in pending_open state
 			elif self.state == ClientSocket.STATE_PENDING_OPEN and req.ack == 0:
 				logging.debug("Stage 1 init request of this client already added, sending stored response ...")
-				return self.tx_packet
 			else:
 				print("Invalid socket state {0} for CTLM_TYPE_CON_INIT_REQ1".format(self.state))
 				resp= Packet.generateResetPacket(req, self.srvID, Packet.CON_RESET_REASON_UNSPECIFIED, seq=1)
 				self.tx_packet = resp
 				self.last_rx_packet = req
 				self.state = ClientSocket.STATE_PENDING_CLOSE
-				return self.tx_packet
+			return self.tx_packet
+
 		elif req.seq == 2 and req.ctlm_type == Packet.CTLM_TYPE_CON_INIT_REQ2:
 			if self.state == ClientSocket.STATE_PENDING_OPEN:
 				print("InReq2 from ClientID {0} ...".format(req.clientID))
@@ -557,22 +539,17 @@ class ClientSocket(object):
 				print("... InRsp2: Client added to accept-queue.")
 				self.print_out()				
 
-				return self.tx_packet
-
-
 			elif self.state == ClientSocket.STATE_PENDING_ACCEPT:
 				logging.debug("Connection in handover queue, resending stage2 response")
-				return self.tx_packet
 			elif self.state == ClientSocket.STATE_OPEN and self.last_rx_packet.ctlm_type == Packet.CTLM_TYPE_CON_INIT_REQ2:
 				logging.debug("Resending stage2 response")
-				return self.tx_packet			
 			else:
 				logging.debug("Invalid socket state {0} for CTLM_TYPE_CON_INIT_REQ2".format(self.state))
 				resp= Packet.generateResetPacket(req, self.srvID, Packet.CON_RESET_REASON_UNSPECIFIED, seq=2)
 				self.tx_packet = resp
 				self.last_rx_packet = req
 				self.state = ClientSocket.STATE_PENDING_CLOSE
-				return self.tx_packet
+			return self.tx_packet
 
 
 		#### data handling ######
@@ -589,7 +566,7 @@ class ClientSocket(object):
 			if self.state != ClientSocket.STATE_OPEN:
 				logging.debug("Ignored inbound data packet, as socket for client ID {0} isn't in OPEN state".format(self.clientID))
 				return None
-			
+
 			# check if seq has advanced
 			if req.seq == ((self.last_rx_packet.seq + 1) & 0xFF):
 				# new input packet, push data to in_queue
@@ -675,14 +652,14 @@ class ServerSocket:
 
 	@staticmethod
 	def eprint(message):
-		sys.stderr.write("WiFiSocket ERROR: "+message + "\n")
+		sys.stderr.write(f"WiFiSocket ERROR: {message}" + "\n")
 
 	@staticmethod
 	def __parse_ies(s):
 		res = {}
 		if len(s) < 2:
 			return res
-		pos = 0	
+		pos = 0
 		while pos < (len(s)-2):
 			t = ord(s[pos])
 			pos+=1
@@ -690,7 +667,7 @@ class ServerSocket:
 			pos+=1
 			v = s[pos:pos+l]
 			pos += l
-			res.update({t: [l, v]})
+			res[t] = [l, v]
 
 		return res
 
@@ -698,10 +675,10 @@ class ServerSocket:
 	def bind(self, srvID=7):
 		self.srvID = srvID
 
-		if ServerSocket.__global_firmware_event_queue == None:
+		if ServerSocket.__global_firmware_event_queue is None:
 			ServerSocket.__global_firmware_event_queue = Queue.Queue()
 
-		if not ServerSocket.__nl_in_socket == None:
+		if not ServerSocket.__nl_in_socket is None:
 			ServerSocket.eprint("bind() netlink multicast listener already running...")
 			self.isBound = True
 			return None
@@ -772,12 +749,12 @@ class ServerSocket:
 		logging.debug("Listening for WiFi firmware events")
 		sfd = ServerSocket.__nl_in_socket.fileno()
 
+		# instead of blocking read, we poll the socket (blocking, but with timeout)
+		# this is used to keep the thread responsive in order to allow ending it (at least with a delay of read_timeout)
+		read_timeout = 0.5
 		while not ServerSocket.__nl_thread_stop.isSet():
 			
 
-			# instead of blocking read, we poll the socket (blocking, but with timeout)
-			# this is used to keep the thread responsive in order to allow ending it (at least with a delay of read_timeout)
-			read_timeout = 0.5
 			sel = select([sfd], [], [], read_timeout) # test if readable data arrived on nl_socket, interrupt after timeout
 			if len(sel[0]) == 0:
 				# no data arrived
@@ -808,13 +785,12 @@ class ServerSocket:
 			# check fo SSID
 			ssid = None
 			ssid_len = 0
-			if 0 in ies:
-				ssid_len = ies[0][0]
-				ssid = ies[0][1]
-			else:
+			if 0 not in ies:
 				continue
 
 
+			ssid_len = ies[0][0]
+			ssid = ies[0][1]
 			# check for vendor specific IE (we only check one of the possible vendor IEs)
 			ven_ie = None
 			ven_ie_len = 0
@@ -838,7 +814,7 @@ class ServerSocket:
 
 	@staticmethod
 	def __send_probe_resp_to_driver(sa, da, ie_ssid_data, ie_vendor_data=None):
-		if ServerSocket.__nl_out_socket_fd == None:
+		if ServerSocket.__nl_out_socket_fd is None:
 			ServerSocket.eprint("Socket FD for unicast to device driver not defined")
 			return
 
@@ -847,64 +823,45 @@ class ServerSocket:
 
 		ie_ssid_type = 0
 		ie_ssid_len = 32
-		ie_vendor_type = 221
-		ie_vendor_len = 238
-
 		buf = ""
 
 
-		# For Atheros AR9271:
-		# 	Supported rates IE and DS parameter set IE have to be present in probe response, otherwise the frame is discarded
-		#	additional note on Atheros: 
-		# 		- vendor IEs isn't transmitted for probe requests issued by scans from Windows, thus the client-to-server mtu is only 7 bytes
-		#		- vendor IEs from probe responses could be read back (as long as the IEs highlighted above are added), thus client to server MTU is 264 bytes
-		#		- a single scan takes less than 4 seconds
-		#		- a scan caches up to 22 received probe responses (based on observations). We only have 16 sequence numbers, this would break the
-		#		flow control (doubled seq/ack). Luckily the Windows driver returns the list in order of reception, which means the last SSID in the
-		#		list of scan results, is the newest Probe Response received. By iterating over the list in reverse order, we could discard older packets
-		#		with repeated sequence number relaibly.
-		#		- the "automatic mtu scaling" works nicely ... client to server data uses only the SSID IE, server to client data contains an additional
-		#		vendor IE and thus has a larger MTU
-		# For 'Intel(R) Dual Band Wireless-AC 3160'
-		#	no additional IEs (beside SSID and Vendor specific IE with data), have to be present in order to work
-		#		- MTU in both directions is 264 bytes, but a single scan takes ~4 seconds
-		
-		insert = "\x01\x08\x82\x84\x8b\x96\x12\x24\x48\x6c" # Supported Rates 1(B), 2(B), 5.5(B), 11(B), 6(B), 9, 12(B), 18, [Mbit/sec]
-		insert += "\x03\x01\x0b" # DS Parameter set: Current Channel: 11
-		
-		
+		insert = "\x01\x08\x82\x84\x8b\x96\x12\x24\x48\x6c" + "\x03\x01\x0b"
 		insert += "\x7f\x08\x00\x00\x00\x00\x00\x00\x00\x40"
 
-		
-		
+
+
 		len_insert =  len(insert)
-		if ie_vendor_data == None:
+		if ie_vendor_data is None:
 			buf = struct.pack("<II6s6sBB32s{0}s".format(len_insert), 
-                                          MaMe82_IO.MAME82_IOCTL_ARG_TYPE_SEND_PROBE_RESP, 
-                                48 + len_insert, # 6 + 6 + 1 + 1 +32 + 1 + 1 + 238
-                                arr_da, 
-                                arr_bssid,
-                                ie_ssid_type,
-                                ie_ssid_len,
-                                ie_ssid_data,
-			        insert)
+			MaMe82_IO.MAME82_IOCTL_ARG_TYPE_SEND_PROBE_RESP, 
+			48 + len_insert, # 6 + 6 + 1 + 1 +32 + 1 + 1 + 238
+			arr_da, 
+			arr_bssid,
+			ie_ssid_type,
+			ie_ssid_len,
+			ie_ssid_data,
+			insert)
 		else:
+			ie_vendor_type = 221
+			ie_vendor_len = 238
+
 			buf = struct.pack("<II6s6sBB32s{0}sBB238s".format(len_insert), 
-                                          MaMe82_IO.MAME82_IOCTL_ARG_TYPE_SEND_PROBE_RESP, 
-                                286 + len_insert, # 6 + 6 + 1 + 1 +32 + 1 + 1 + 238
-                                arr_da, 
-                                arr_bssid,
-                                ie_ssid_type,
-                                ie_ssid_len,
-                                ie_ssid_data,
+			          MaMe82_IO.MAME82_IOCTL_ARG_TYPE_SEND_PROBE_RESP, 
+			286 + len_insert, # 6 + 6 + 1 + 1 +32 + 1 + 1 + 238
+			arr_da, 
+			arr_bssid,
+			ie_ssid_type,
+			ie_ssid_len,
+			ie_ssid_data,
                                 # insert additional IEs here
-			        insert, 
-                                ie_vendor_type,
-                                ie_vendor_len,
-                                ie_vendor_data)
+			insert, 
+			ie_vendor_type,
+			ie_vendor_len,
+			ie_vendor_data)
 
 		#print("Outbuf to driver: {0}".format(Helper.s2hex(buf)))
-		
+
 		ioctl_sendprbrsp = nexconf.create_cmd_ioctl(MaMe82_IO.CMD, buf, True)
 		nexconf.sendNL_IOCTL(ioctl_sendprbrsp, nl_socket_fd=ServerSocket.__nl_out_socket_fd)
 
@@ -915,7 +872,10 @@ class ServerSocket:
 
 		# "init connection" set
 		if req.FlagControlMessage and self.isListening:
-			if req.ctlm_type == Packet.CTLM_TYPE_CON_INIT_REQ1 or req.ctlm_type == Packet.CTLM_TYPE_CON_INIT_REQ2:
+			if req.ctlm_type in [
+			    Packet.CTLM_TYPE_CON_INIT_REQ1,
+			    Packet.CTLM_TYPE_CON_INIT_REQ2,
+			]:
 				if req.srvID != self.srvID:
 					logging.debug("Control message CTLM_TYPE {0} targets srvID {1}, but we're {2} ... packet dropped".format(req.ctlm_type, req.srvID, self.srvID))
 				else:
@@ -954,12 +914,12 @@ class ServerSocket:
 
 
 			con_pending_open = q.getConnectionByClientIV(iv)
-			if con_pending_open == None: # no ClientSocket exists for this IV
+			if con_pending_open is None: # no ClientSocket exists for this IV
 				print("InReq1: Connection request from client IV: {0}".format(iv))
 				req.print_out()
 
 				cl_sock = q.provideNewClientSocket(self.srvID)
-				if cl_sock == None:
+				if cl_sock is None:
 					logging.debug("No additional connections possible")
 					# no need to send a connection reset, as the client is still in initial state and continues trying to connect
 					return
@@ -970,25 +930,24 @@ class ServerSocket:
 				resp = cl_sock.handleRequest(req)
 				print("... InRsp1: Handing out client ID {0}".format(resp.clientID))
 				self.sendResponse(resp)
-			# ClientSocket for given IV exists already
 			else:
 				resp = con_pending_open.handleRequest(req)
-				if resp != None:
-					self.sendResponse(resp)
-				else:
+				if resp is None:
 					logging.debug("unhandled request")
-					req.print_out				
-				#logging.debug("Received continuos stage1 request for socket which is not in pending_open state") # shouldn't happen (only if IV is reused)
-				# ToDo: send reset
+					req.print_out
+				else:
+					self.sendResponse(resp)				
+						#logging.debug("Received continuos stage1 request for socket which is not in pending_open state") # shouldn't happen (only if IV is reused)
+						# ToDo: send reset
 		else:
 			cl_sock = q.getConnectionByClientID(req.clientID)
 			if cl_sock != None:
 				resp = cl_sock.handleRequest(req)
-				if resp != None:
-					self.sendResponse(resp)
-				else:
+				if resp is None:
 					logging.debug("Clientsocket has no response for following request")
 					req.print_out()
+				else:
+					self.sendResponse(resp)
 			else:
 				logging.debug("No target socket for following request from clientID {0}, sending reset...".format(req.clientID))
 				req.print_out()
@@ -1048,11 +1007,11 @@ class Server(cmd.Cmd):
 		try:
 			while self.serv_socket.isListening and self.serv_socket.isBound:
 				con = self.serv_socket.accept()
-				if con == None:
+				if con is None:
 					continue
 				logging.debug("Accepted new client ID: {0}".format(con.clientID))
-				#self.client_socks.append(con)
-				#con.print_out()
+						#self.client_socks.append(con)
+						#con.print_out()
 
 		finally:
 			# ToDo: disconnect all client sockets
@@ -1061,23 +1020,17 @@ class Server(cmd.Cmd):
 	def __check_for_clientID(self,  clientID):
 		# type: (int)  -> bool
 		client_socks = self.serv_socket.getOpenClientSockets()
-		for c in client_socks:
-			if c.clientID == clientID:
-				return True
-		return False
+		return any(c.clientID == clientID for c in client_socks)
 
 	def __get_client_sock_by_ID(self,  clientID):
 		# type: (int)  -> ClientSocket
 		client_socks = self.serv_socket.getOpenClientSockets()
-		for c in client_socks:
-			if c.clientID == clientID:
-				return c
-		return None	
+		return next((c for c in client_socks if c.clientID == clientID), None)	
 
 	def __interact(self,  clientID):
 		# grab clientSocket
 		cs = self.__get_client_sock_by_ID(clientID)
-		if cs ==  None:
+		if cs is None:
 			print("No session for clientID {0} found".format(clientID))
 			return
 
@@ -1093,8 +1046,8 @@ class Server(cmd.Cmd):
 
 					#print(input)
 					cs.send(input)
-					
-					
+
+
 			except KeyboardInterrupt:
 				print("\nInteraction with clientID {0} paused.\nWhat do you want to do ?".format(cs.clientID))
 				print("\t0: Continue interaction")
@@ -1134,7 +1087,7 @@ class Server(cmd.Cmd):
 					cs.sendCtlMessage(Packet.CTLM_TYPE_KILL_CLIENT, "")
 					continue
 				elif selection == 4:
-					
+
 					print("This option is under development")
 				else:
 					# ToDo

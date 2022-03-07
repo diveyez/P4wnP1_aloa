@@ -109,10 +109,7 @@ class struct_nexudp_ioctl_hdr(Structure):
 
 
 def mac2bstr(mac):
-	res = ""
-	for v in mac.split(":"):
-		res += chr(int(v,16))
-	return res
+	return "".join(chr(int(v,16)) for v in mac.split(":"))
 
 class nexconf:
 	NLMSG_ALIGNTO = 4
@@ -369,15 +366,12 @@ class MaMe82_IO:
 	def send_probe_resp(bssid, da="ff:ff:ff:ff:ff:ff", ie_ssid_data="TEST_SSID", ie_vendor_data=None):
 		arr_bssid = mac2bstr(bssid)
 		arr_da = mac2bstr(da)
-		
+
+		buf = ""
+
 		ie_ssid_type = 0
 		ie_ssid_len = 32
-		ie_vendor_type = 221
-		ie_vendor_len = 238
-		
-		buf = ""
-		
-		if ie_vendor_data == None:
+		if ie_vendor_data is None:
 			buf = struct.pack("<II6s6sBB32s", 
 				MaMe82_IO.MAME82_IOCTL_ARG_TYPE_SEND_PROBE_RESP, 
 				48, # 6 + 6 + 1 + 1 +32 + 1 + 1 + 238
@@ -387,6 +381,9 @@ class MaMe82_IO:
 				ie_ssid_len,
 				ie_ssid_data)
 		else:
+			ie_vendor_len = 238
+
+			ie_vendor_type = 221
 			buf = struct.pack("<II6s6sBB32sBB238s", 
 				MaMe82_IO.MAME82_IOCTL_ARG_TYPE_SEND_PROBE_RESP, 
 				286, # 6 + 6 + 1 + 1 +32 + 1 + 1 + 238
@@ -399,9 +396,9 @@ class MaMe82_IO:
 				ie_vendor_type,
 				ie_vendor_len,
 				ie_vendor_data)
-		
+
 		#print repr(buf)
-		
+
 		ioctl_sendprbrsp = nexconf.create_cmd_ioctl(MaMe82_IO.CMD, buf, True)
 		nexconf.sendNL_IOCTL(ioctl_sendprbrsp)
 		
@@ -508,13 +505,12 @@ class MaMe82_IO:
 	def check_for_karma_cap():
 		ioctl = nexconf.create_cmd_ioctl(400, "", False) # there's a length check for the CAPs ioctl, forcing size to 4 (only command, no arg buffer)
 		res = nexconf.sendNL_IOCTL(ioctl)
-		if res == None:
+		if res is None:
 			return False
-		else:
-			cap = struct.unpack("I", res[:4])[0]
-			# print "Cap: {0}".format(MaMe82_IO.s2hex(res))
-			if (cap & MaMe82_IO.KARMA_CAP == 0):
-				return False
+		cap = struct.unpack("I", res[:4])[0]
+		# print "Cap: {0}".format(MaMe82_IO.s2hex(res))
+		if (cap & MaMe82_IO.KARMA_CAP == 0):
+			return False
 		return True
 		
 	@staticmethod
@@ -569,7 +565,7 @@ class MaMe82_IO:
 		cur = head.contents
 		while cast(cur.next, c_void_p).value != None:
 			cur = cur.next.contents
-			str_ssid = "".join(chr(c) for c in cur.ssid[0:cur.len_ssid])
+			str_ssid = "".join(chr(c) for c in cur.ssid[:cur.len_ssid])
 			ssids.append(str_ssid)
 		return ssids
 		
